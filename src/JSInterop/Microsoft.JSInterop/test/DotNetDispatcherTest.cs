@@ -2,15 +2,14 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
-using System.ComponentModel.DataAnnotations;
 using System.Linq;
 using System.Runtime.ExceptionServices;
 using System.Text.Json;
-using System.Text.Json.Serialization;
+using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
 
-namespace Microsoft.JSInterop.Tests
+namespace Microsoft.JSInterop
 {
     public class DotNetDispatcherTest
     {
@@ -240,6 +239,72 @@ namespace Microsoft.JSInterop.Tests
         });
 
         [Fact]
+        public Task EndInvoke_WithSuccessValue() => WithJSRuntime(jsRuntime =>
+        {
+            // Arrange
+            var testDTO = new TestDTO { StringVal = "Hello", IntVal = 4 };
+            var task = jsRuntime.InvokeAsync<TestDTO>("unimportant");
+            var argsJson = JsonSerializer.Serialize(new object[] { jsRuntime.LastInvocationAsyncHandle, true, testDTO }, JsonSerializerOptionsProvider.Options);
+
+            // Act
+            DotNetDispatcher.EndInvoke(argsJson);
+
+            // Assert
+            Assert.True(task.IsCompletedSuccessfully);
+            var result = task.Result;
+            Assert.Equal(testDTO.StringVal, result.StringVal);
+            Assert.Equal(testDTO.IntVal, result.IntVal);
+        });
+
+        [Fact]
+        public Task EndInvoke_WithErrorString() => WithJSRuntime(async jsRuntime =>
+        {
+            // Arrange
+            var expected = "Some error";
+            var task = jsRuntime.InvokeAsync<TestDTO>("unimportant");
+            var argsJson = JsonSerializer.Serialize(new object[] { jsRuntime.LastInvocationAsyncHandle, false, expected }, JsonSerializerOptionsProvider.Options);
+
+            // Act
+            DotNetDispatcher.EndInvoke(argsJson);
+
+            // Assert
+            var ex = await Assert.ThrowsAsync<JSException>(() => task);
+            Assert.Equal(expected, ex.Message);
+        });
+
+        [Fact(Skip = "https://github.com/aspnet/AspNetCore/issues/12357")]
+        public Task EndInvoke_AfterCancel() => WithJSRuntime(jsRuntime =>
+        {
+            // Arrange
+            var testDTO = new TestDTO { StringVal = "Hello", IntVal = 4 };
+            var cts = new CancellationTokenSource();
+            var task = jsRuntime.InvokeAsync<TestDTO>("unimportant", cts.Token);
+            var argsJson = JsonSerializer.Serialize(new object[] { jsRuntime.LastInvocationAsyncHandle, true, testDTO }, JsonSerializerOptionsProvider.Options);
+
+            // Act
+            cts.Cancel();
+            DotNetDispatcher.EndInvoke(argsJson);
+
+            // Assert
+            Assert.True(task.IsCanceled);
+        });
+
+        [Fact]
+        public Task EndInvoke_WithNullError() => WithJSRuntime(async jsRuntime =>
+        {
+            // Arrange
+            var task = jsRuntime.InvokeAsync<TestDTO>("unimportant");
+            var argsJson = JsonSerializer.Serialize(new object[] { jsRuntime.LastInvocationAsyncHandle, false, null }, JsonSerializerOptionsProvider.Options);
+
+            // Act
+            DotNetDispatcher.EndInvoke(argsJson);
+
+            // Assert
+            var ex = await Assert.ThrowsAsync<JSException>(() => task);
+            Assert.Empty(ex.Message);
+        });
+
+        [Fact]
         public Task CanInvokeInstanceMethodWithParams() => WithJSRuntime(jsRuntime =>
         {
             // Arrange: Track some instance plus another object we'll pass as a param
@@ -301,7 +366,7 @@ namespace Microsoft.JSInterop.Tests
             // Assert: Correct completion information
             Assert.Equal(callId, jsRuntime.LastCompletionCallId);
             Assert.True(jsRuntime.LastCompletionStatus);
-            var result = Assert.IsType<object []>(jsRuntime.LastCompletionResult);
+            var result = Assert.IsType<object[]>(jsRuntime.LastCompletionResult);
             var resultDto1 = Assert.IsType<TestDTO>(result[0]);
 
             Assert.Equal("STRING VIA JSON", resultDto1.StringVal);

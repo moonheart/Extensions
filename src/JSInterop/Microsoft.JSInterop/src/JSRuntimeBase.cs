@@ -5,7 +5,6 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
-using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -139,40 +138,49 @@ namespace Microsoft.JSInterop
             string methodIdentifier,
             long dotNetObjectId);
 
-        internal void EndInvokeJS(long taskId, bool succeeded, JSAsyncCallResult asyncCallResult)
+        internal void EndInvokeJS(long taskId, bool succeeded, ref Utf8JsonReader jsonReader)
         {
-            using (asyncCallResult?.JsonDocument)
+            if (!_pendingTasks.TryRemove(taskId, out var tcs))
             {
-                if (!_pendingTasks.TryRemove(taskId, out var tcs))
-                {
-                    // We should simply return if we can't find an id for the invocation.
-                    // This likely means that the method that initiated the call defined a timeout and stopped waiting.
-                    return;
-                }
+                // We should simply return if we can't find an id for the invocation.
+                // This likely means that the method that initiated the call defined a timeout and stopped waiting.
+                return;
+            }
 
-                CleanupTasksAndRegistrations(taskId);
+            CleanupTasksAndRegistrations(taskId);
 
-                if (succeeded)
+            if (succeeded)
+            {
+                var resultType = TaskGenericsUtil.GetTaskCompletionSourceResultType(tcs);
+                try
                 {
-                    var resultType = TaskGenericsUtil.GetTaskCompletionSourceResultType(tcs);
-                    try
-                    {
-                        var result = asyncCallResult != null ?
-                            JsonSerializer.Deserialize(asyncCallResult.JsonElement.GetRawText(), resultType, JsonSerializerOptionsProvider.Options) :
-                            null;
-                        TaskGenericsUtil.SetTaskCompletionSourceResult(tcs, result);
-                    }
-                    catch (Exception exception)
-                    {
-                        var message = $"An exception occurred executing JS interop: {exception.Message}. See InnerException for more details.";
-                        TaskGenericsUtil.SetTaskCompletionSourceException(tcs, new JSException(message, exception));
-                    }
+                    jsonReader.Read();
+                    var result = JsonSerializer.Deserialize(ref jsonReader, resultType, JsonSerializerOptionsProvider.Options);
+                    TaskGenericsUtil.SetTaskCompletionSourceResult(tcs, result);
                 }
-                else
+                catch (Exception exception)
                 {
-                    var exceptionText = asyncCallResult?.JsonElement.ToString() ?? string.Empty;
+                    SetJSException(exception);
+                }
+            }
+            else
+            {
+                try
+                {
+                    jsonReader.Read();
+                    var exceptionText = jsonReader.TokenType == JsonTokenType.Null ? string.Empty : jsonReader.GetString();
                     TaskGenericsUtil.SetTaskCompletionSourceException(tcs, new JSException(exceptionText));
                 }
+                catch (Exception exception)
+                {
+                    SetJSException(exception);
+                }
+            }
+
+            void SetJSException(Exception exception)
+            {
+                var message = $"An exception occurred executing JS interop: {exception.Message}. See InnerException for more details.";
+                TaskGenericsUtil.SetTaskCompletionSourceException(tcs, new JSException(message, exception));
             }
         }
     }
