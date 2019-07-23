@@ -13,5 +13,11 @@ namespace Microsoft.Extensions.Configuration
         /// If true, the binder will attempt to set all non read-only properties.
         /// </summary>
         public bool BindNonPublicProperties { get; set; }
+
+        /// <summary>
+        /// Resolver used when resolve the name of a <see cref="PropertyInfo"/> to get section from <see cref="IConfiguration"/>
+        /// </summary>
+        public Func<PropertyInfo, string> PropertyNameResolver { get; set; }
+
     }
 }

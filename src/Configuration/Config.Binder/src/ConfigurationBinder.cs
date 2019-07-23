@@ -207,7 +207,8 @@ namespace Microsoft.Extensions.Configuration
                 return;
             }
 
-            propertyValue = BindInstance(property.PropertyType, propertyValue, config.GetSection(property.Name), options);
+            var propertyName = options.PropertyNameResolver == null ? property.Name : options.PropertyNameResolver(property);
+            propertyValue = BindInstance(property.PropertyType, propertyValue, config.GetSection(propertyName), options);
 
             if (propertyValue != null && hasSetter)
             {
